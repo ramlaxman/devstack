@@ -193,11 +193,11 @@ function configure_tempest {
         available_flavors=$(nova flavor-list)
         if  [[ -z "$DEFAULT_INSTANCE_TYPE" ]]; then
             if [[ ! ( $available_flavors =~ 'm1.nano' ) ]]; then
-                nova flavor-create m1.nano 42 64 0 1
+                openstack flavor create --id 42 --ram 64 --disk 0 --vcpus 1 m1.nano
             fi
             flavor_ref=42
             if [[ ! ( $available_flavors =~ 'm1.micro' ) ]]; then
-                nova flavor-create m1.micro 84 128 0 1
+                openstack flavor create --id 84 --ram 128 --disk 0 --vcpus 1 m1.micro
             fi
             flavor_ref_alt=84
         else
@@ -242,8 +242,7 @@ function configure_tempest {
     # the public network (for floating ip access) is only available
     # if the extension is enabled.
     if is_networking_extension_supported 'external-net'; then
-        public_network_id=$(openstack network list | grep $PUBLIC_NETWORK_NAME | \
-            awk '{print $2}')
+        public_network_id=$(openstack network show -f value -c id $PUBLIC_NETWORK_NAME)
     fi
 
     iniset $TEMPEST_CONFIG DEFAULT use_syslog $SYSLOG
@@ -270,13 +269,15 @@ function configure_tempest {
         iniset $TEMPEST_CONFIG auth admin_project_name $admin_project_name
         iniset $TEMPEST_CONFIG auth admin_domain_name $admin_domain_name
     fi
-    if [ "$ENABLE_IDENTITY_V2" == "False" ]; then
-        # Only Identity v3 is available; then skip Identity API v2 tests
-        iniset $TEMPEST_CONFIG identity-feature-enabled api_v2 False
-        # In addition, use v3 auth tokens for running all Tempest tests
-        iniset $TEMPEST_CONFIG identity auth_version v3
-    else
+    if [ "$ENABLE_IDENTITY_V2" == "True" ]; then
+        # Run Identity API v2 tests ONLY if needed
+        iniset $TEMPEST_CONFIG identity-feature-enabled api_v2 True
         iniset $TEMPEST_CONFIG identity auth_version ${TEMPEST_AUTH_VERSION:-v2}
+    else
+        # Skip Identity API v2 tests by default
+        iniset $TEMPEST_CONFIG identity-feature-enabled api_v2 False
+        # Use v3 auth tokens for running all Tempest tests
+        iniset $TEMPEST_CONFIG identity auth_version v3
     fi
 
     if is_ssl_enabled_service "key" || is_service_enabled tls-proxy; then
@@ -384,11 +385,6 @@ function configure_tempest {
 
     # Orchestration Tests
     if is_service_enabled heat; then
-        # Though this is not needed by heat, some tempest tests explicitly
-        # try to set this role. Removing them from the tempest tests breaks
-        # some non-devstack CIs.
-        get_or_create_role "heat_stack_owner"
-
         if [[ ! -z "$HEAT_CFN_IMAGE_URL" ]]; then
             iniset $TEMPEST_CONFIG orchestration image_ref $(basename "${HEAT_CFN_IMAGE_URL%.*}")
         fi
@@ -397,12 +393,12 @@ function configure_tempest {
             # build a specialized heat flavor
             available_flavors=$(nova flavor-list)
             if [[ ! ( $available_flavors =~ 'm1.heat' ) ]]; then
-                nova flavor-create m1.heat 451 512 0 1
+                openstack flavor create --id 451 --ram 512 --disk 0 --vcpus 1 m1.heat
             fi
             iniset $TEMPEST_CONFIG orchestration instance_type "m1.heat"
         fi
         iniset $TEMPEST_CONFIG orchestration build_timeout 900
-        iniset $TEMPEST_CONFIG orchestration stack_owner_role "heat_stack_owner"
+        iniset $TEMPEST_CONFIG orchestration stack_owner_role Member
     fi
 
     # Scenario
